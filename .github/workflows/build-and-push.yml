@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build and Push Docker Images
 
 on:
   push:
@@ -8,6 +8,18 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - version: v1
+            context: ./v1
+            tags: |
+              ghcr.io/${{ github.repository }}:v1
+          - version: v2
+            context: ./v2
+            tags: |
+              ghcr.io/${{ github.repository }}:v2
+              ghcr.io/${{ github.repository }}:latest
     permissions:
       contents: read
       packages: write
@@ -22,11 +34,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (${{ matrix.version }})
         uses: docker/build-push-action@v3
         with:
-          context: .
+          context: ${{ matrix.context }}
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:v2
+          tags: ${{ matrix.tags }}
