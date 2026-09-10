@@ -64,7 +64,7 @@ let MicrosoftStrategy = class MicrosoftStrategy extends (0, _passport.PassportSt
             clientID: twentyConfigService.get('AUTH_MICROSOFT_CLIENT_ID'),
             clientSecret: twentyConfigService.get('AUTH_MICROSOFT_CLIENT_SECRET'),
             callbackURL: twentyConfigService.get('AUTH_MICROSOFT_CALLBACK_URL'),
-            tenant: twentyConfigService.get('AUTH_MICROSOFT_TENANT_ID'),
+            tenant: twentyConfigService.get('AUTH_MICROSOFT_TENANT_ID') || process.env.AUTH_MICROSOFT_TENANT_ID,
             scope: [
                 'User.Read'
             ],
