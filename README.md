@@ -9,7 +9,7 @@ By default, Twenty CRM hardcodes `tenant: 'common'`, which causes Azure AD singl
 | Variant | Base Image | Context | Image Tags |
 |---|---|---|---|
 | **v1** | `twentycrm/twenty:v1` | `./v1` | `ghcr.io/<repo>:v1` |
-| **v2** | `twentycrm/twenty:v2` | `./v2` (or root `.`) | `ghcr.io/<repo>:v2`, `ghcr.io/<repo>:latest` |
+| **v2** | `twentycrm/twenty:v2` | `./v2` | `ghcr.io/<repo>:v2`, `ghcr.io/<repo>:latest` |
 
 ## Environment Variables
 
