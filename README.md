@@ -48,6 +48,21 @@ Creating or re-pointing a related record (a note target, attachment or editor ro
 
 The patch finds the member relation from the junction settings, or else from the first relation on the junction object that points to *Workspace Members*. So step 4 only changes how editors appear in the UI.
 
+### Checking the setup
+
+Run `scripts/check-rls-setup.sh` from the directory with the deployment's compose file. It checks that:
+
+- `server` and `worker` run a patched image, and the patch works with that Twenty release
+- RLS is enabled, and the logs have no `[rls-opportunity]` errors
+- in every workspace, each field in `RLS_OPPORTUNITY_MEMBER_FIELDS` resolves the way the patch expects, and the junction table has its columns
+
+It then lists the admin users (they see every opportunity) and the opportunities without an owner. It exits 1 if anything would stop RLS from working. Service names and database credentials can be overridden; see the top of the script.
+
+```bash
+scripts/check-rls-setup.sh
+COMPOSE="docker compose -f compose.prod.yml" SERVER_SERVICES="twenty-server" scripts/check-rls-setup.sh
+```
+
 ```env
 RLS_OPPORTUNITY_ENABLED=true                # set to false to turn it off
 RLS_OPPORTUNITY_MEMBER_FIELDS=owner,editors # opportunity fields that grant access: relations to
@@ -72,7 +87,7 @@ docker build -t twenty-azure:v2 --build-arg TWENTY_VERSION=v2.45.0 ./v2
 
 ## E2E test (v2)
 
-`e2e/run.sh` starts a throwaway Twenty stack (`e2e/compose.yml`, port 3300) with the light dev seed, where Tim is admin and Jony / Jane are members. It then runs `e2e/rls.test.mjs` against the GraphQL API, using Node 20+ with no dependencies. The test covers owner visibility, editors through an `opportunityEditor` junction it creates, linked notes, and write checks. The stack is removed afterwards, and server logs are kept in `e2e/server.log`.
+`e2e/run.sh` starts a throwaway Twenty stack (`e2e/compose.yml`, port 3300) with the light dev seed, where Tim is admin and Jony / Jane are members. It then runs `e2e/rls.test.mjs` against the GraphQL API, using Node 20+ with no dependencies. The test covers owner visibility, editors through an `opportunityEditor` junction it creates, linked notes, and write checks. It finishes with `scripts/check-rls-setup.sh`. The stack is removed afterwards, and server logs are kept in `e2e/server.log`.
 
 ```bash
 e2e/run.sh                      # build ./v2 and test it

@@ -27,3 +27,6 @@ if compose logs server | grep -q '\[rls-opportunity\] failed'; then
 fi
 
 E2E_BASE_URL="http://localhost:$E2E_PORT" node --test --test-reporter=spec rls.test.mjs
+
+# The tests created the editors junction, so the setup check must pass now
+COMPOSE="docker compose -f compose.yml" ../scripts/check-rls-setup.sh
