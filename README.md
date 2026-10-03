@@ -44,7 +44,7 @@ Creating or re-pointing a related record (a note target, attachment or editor ro
 1. **Settings → Data model → + New object**: `Opportunity Editor` (API name `opportunityEditor`).
 2. On it, add a **Relation** field `opportunity` → *Opportunities* (many editor rows to one opportunity), and name the reverse field on Opportunities **`editors`**.
 3. On it, add a **Relation** field `workspaceMember` → *Workspace Members* (many editor rows to one member).
-4. Optional: enable the **Junction Relations** feature in *Settings → Releases / Lab*, then configure `editors` on Opportunities to show members through the junction (target field `workspaceMember`).
+4. Optional: to pick members directly in the Editors field, open *Settings → Data model → Opportunities → Fields → editors → Advanced*. Turn on **This is a relation to a Junction Object** and set **Target relation on Junction Object** to the member relation from step 3. Since v2.45 this needs no Lab feature flag.
 
 The patch finds the member relation from the junction settings, or else from the first relation on the junction object that points to *Workspace Members*. So step 4 only changes how editors appear in the UI.
 
