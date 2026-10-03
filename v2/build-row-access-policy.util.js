@@ -23,6 +23,12 @@
 // Everything is plain SQL on existing tables: no schema change, no cache.
 // subject.principalIds is [EVERYONE, workspaceMemberId, ...roleIds], so it is
 // matched both against core.role (admin check) and the member columns.
+//
+// Policies are expression trees ({ kind: 'and' | 'or' | 'roleFilter' | ... })
+// that are compiled to SQL for queries and evaluated in memory against record
+// snapshots for event gates (realtime, webhooks, database-event triggers). Only
+// a 'roleFilter' node carries raw SQL, so the restriction is added as one; its
+// recordFilter is what the in-memory evaluation reads instead.
 Object.defineProperty(exports, "__esModule", {
     value: true
 });
@@ -33,7 +39,6 @@ Object.defineProperty(exports, "buildRowAccessPolicy", {
     }
 });
 const _original = require("./build-row-access-policy.util.orig");
-const _combinesqlconditionsutil = require("./combine-sql-conditions.util");
 const _ismanytooneflatfieldmetadatautil = require("./is-many-to-one-flat-field-metadata.util");
 const _computemorphorrelationfieldjoincolumnnameutil = require("../../metadata-modules/field-metadata/utils/compute-morph-or-relation-field-join-column-name.util");
 const OPPORTUNITY = 'opportunity';
@@ -57,6 +62,16 @@ const ACTIVITY_OBJECTS = {
 };
 const PRINCIPALS_PARAM = 'rlsOpportunityPrincipalIds';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Record filters for the in-memory evaluation: an empty "not" always matches,
+// deleted records included, and negating it never does
+const MATCH_ALL_FILTER = {
+    not: {}
+};
+const MATCH_NONE_FILTER = {
+    not: {
+        not: {}
+    }
+};
 const isEnabled = ()=>process.env.RLS_OPPORTUNITY_ENABLED !== 'false';
 const memberFieldNames = ()=>(process.env.RLS_OPPORTUNITY_MEMBER_FIELDS || 'owner,editors').split(',').map((name)=>name.trim()).filter(Boolean);
 const quote = (identifier)=>`"${String(identifier).replace(/"/g, '""')}"`;
@@ -157,7 +172,14 @@ const resolveConfig = (flatObjectMetadataMaps, flatFieldMetadataMaps)=>{
     });
     return config;
 };
-const buildOpportunityOwnerEditorCondition = ({ subject, environment, tableAlias, flatObjectMetadata })=>{
+const roleFilterExpression = ({ tableAlias, flatObjectMetadata, condition, recordFilter })=>({
+        kind: 'roleFilter',
+        tableAlias,
+        flatObjectMetadata,
+        recordFilter,
+        condition
+    });
+const buildOpportunityOwnerEditorExpression = ({ subject, environment, tableAlias, flatObjectMetadata })=>{
     if (!isEnabled() || subject.isSystemContext) {
         return undefined;
     }
@@ -171,6 +193,20 @@ const buildOpportunityOwnerEditorCondition = ({ subject, environment, tableAlias
     const link = opportunityLinks.get(flatObjectMetadata.id);
     if (name !== OPPORTUNITY && !activity && !link) {
         return undefined;
+    }
+    // Event gates build the policy without table access and evaluate it on
+    // snapshots, where neither the junction nor core.role can be read: only
+    // roles with access to all records get the events
+    if (typeof environment.resolveTableExpression !== 'function') {
+        return subject.canAccessAllRecords ? undefined : roleFilterExpression({
+            tableAlias,
+            flatObjectMetadata,
+            condition: {
+                sql: 'FALSE',
+                parameters: {}
+            },
+            recordFilter: MATCH_NONE_FILTER
+        });
     }
     const principals = `CAST(:${PRINCIPALS_PARAM} AS uuid[])`;
     const alias = quote(tableAlias);
@@ -198,28 +234,38 @@ const buildOpportunityOwnerEditorCondition = ({ subject, environment, tableAlias
         restriction = `${column} IS NULL OR ${column} IN (${accessibleOpportunityIds})`;
     }
     const isAdmin = `EXISTS (SELECT 1 FROM "core"."role" "rls_r" WHERE "rls_r"."id" = ANY(${principals}) AND "rls_r"."canUpdateAllSettings" = true)`;
-    return {
-        sql: `(${isAdmin} OR ${restriction})`,
-        parameters: {
-            [PRINCIPALS_PARAM]: (subject.principalIds ?? []).filter((id)=>UUID_REGEX.test(id))
-        }
-    };
+    // Updates are re-checked in memory with this recordFilter; the SQL check of
+    // the update query and the parent write check already cover this restriction
+    return roleFilterExpression({
+        tableAlias,
+        flatObjectMetadata,
+        condition: {
+            sql: `(${isAdmin} OR ${restriction})`,
+            parameters: {
+                [PRINCIPALS_PARAM]: (subject.principalIds ?? []).filter((id)=>UUID_REGEX.test(id))
+            }
+        },
+        recordFilter: MATCH_ALL_FILTER
+    });
 };
 const buildRowAccessPolicy = (args)=>{
     const policy = (0, _original.buildRowAccessPolicy)(args);
     if (policy.kind === 'denied') {
         return policy;
     }
-    const condition = buildOpportunityOwnerEditorCondition(args);
-    if (!condition) {
+    const expression = buildOpportunityOwnerEditorExpression(args);
+    if (!expression) {
         return policy;
     }
     return {
         kind: 'gated',
-        condition: policy.kind === 'gated' ? (0, _combinesqlconditionsutil.combineSqlConditions)([
-            policy.condition,
-            condition
-        ]) : condition
+        expression: policy.kind === 'gated' ? {
+            kind: 'and',
+            operands: [
+                policy.expression,
+                expression
+            ]
+        } : expression
     };
 };
 // Writes: make Twenty's inherited-parent check (insert / update / upsert) also

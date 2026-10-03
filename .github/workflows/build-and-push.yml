@@ -4,39 +4,111 @@ on:
   push:
     branches:
       - main
+  pull_request:
+  schedule:
+    # Pick up new upstream v2 releases
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
 
 jobs:
-  build-and-push:
+  build-and-push-v1:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - version: v1
-            context: ./v1
-            tags: |
-              ghcr.io/${{ github.repository }}:v1
-          - version: v2
-            context: ./v2
-            tags: |
-              ghcr.io/${{ github.repository }}:v2
-              ghcr.io/${{ github.repository }}:latest
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image (${{ matrix.version }})
-        uses: docker/build-push-action@v3
+      - name: Build and push Docker image (v1)
+        uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: ./v1
           push: true
-          tags: ${{ matrix.tags }}
+          tags: ghcr.io/${{ github.repository }}:v1
+
+  build-test-and-push-v2:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SHOULD_PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # twentycrm/twenty:v2 moves with every release; find the vX.Y.Z tag with the
+      # same digest so the image is built from, and tagged like, that exact release
+      - name: Resolve upstream v2 release
+        id: upstream
+        run: |
+          tags=$(curl -fsSL 'https://hub.docker.com/v2/repositories/twentycrm/twenty/tags?page_size=100&ordering=last_updated')
+          digest=$(jq -r '.results[] | select(.name == "v2") | .digest' <<< "$tags")
+          version=$(jq -r --arg digest "$digest" \
+            '[.results[] | select(.digest == $digest and (.name | test("^v2\\.[0-9]+\\.[0-9]+$"))) | .name][0] // empty' <<< "$tags")
+          if [ -z "$version" ]; then
+            echo "::error::No vX.Y.Z tag matches twentycrm/twenty:v2 ($digest)"
+            exit 1
+          fi
+          echo "Upstream twentycrm/twenty:v2 is $version ($digest)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "minor=${version%.*}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the Container registry
+        if: env.SHOULD_PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Scheduled runs only rebuild when upstream released something new
+      - name: Check whether this release is already published
+        id: published
+        if: github.event_name == 'schedule'
+        run: |
+          if docker manifest inspect "${{ steps.upstream.outputs.image }}:${{ steps.upstream.outputs.version }}" > /dev/null 2>&1; then
+            echo "Already published, nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image
+        if: steps.published.outputs.skip != 'true'
+        run: |
+          docker build \
+            --build-arg TWENTY_VERSION=${{ steps.upstream.outputs.version }} \
+            --label org.opencontainers.image.version=${{ steps.upstream.outputs.version }} \
+            -t twenty-azure:v2-e2e ./v2
+
+      - name: Run e2e tests
+        if: steps.published.outputs.skip != 'true'
+        run: e2e/run.sh twenty-azure:v2-e2e
+
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            e2e/server.log
+            e2e/seed.log
+          if-no-files-found: ignore
+
+      - name: Push image
+        if: env.SHOULD_PUSH == 'true' && steps.published.outputs.skip != 'true'
+        run: |
+          image=${{ steps.upstream.outputs.image }}
+          for tag in ${{ steps.upstream.outputs.version }} ${{ steps.upstream.outputs.minor }} v2 latest; do
+            docker tag twenty-azure:v2-e2e "$image:$tag"
+            docker push "$image:$tag"
+          done
