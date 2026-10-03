@@ -1,0 +1,48 @@
+# Throwaway Twenty stack for the RLS e2e test (see e2e/run.sh)
+name: twenty-azure-e2e
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: default
+    healthcheck:
+      test: pg_isready -U postgres -h localhost -d default
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:alpine
+    command: ["redis-server", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  server:
+    image: ${TWENTY_IMAGE:-twenty-azure:v2-e2e}
+    ports:
+      - "${E2E_PORT:-3300}:3000"
+    environment:
+      NODE_PORT: 3000
+      PG_DATABASE_URL: postgres://postgres:postgres@db:5432/default
+      SERVER_URL: http://localhost:${E2E_PORT:-3300}
+      REDIS_URL: redis://redis:6379
+      APP_SECRET: e2e-only-secret
+      STORAGE_TYPE: local
+      RLS_OPPORTUNITY_ENABLED: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s

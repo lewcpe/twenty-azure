@@ -1,4 +1,6 @@
-FROM twentycrm/twenty:v2
+# Upstream release to patch; CI passes the exact vX.Y.Z that twentycrm/twenty:v2 points to
+ARG TWENTY_VERSION=v2
+FROM twentycrm/twenty:${TWENTY_VERSION}
 COPY microsoft.auth.strategy.js /app/packages/twenty-server/dist/engine/core-modules/auth/strategies/microsoft.auth.strategy.js
 
 # Opportunity owner/editor row-level security: keep the original util as .orig.js and wrap it
